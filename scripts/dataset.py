@@ -1,8 +1,12 @@
 from api import CodeforcesAPI, LeetCodeAPI
 import mysql.connector
+from mysql.connector.errors import IntegrityError
 
-import json
+import logging
 from typing import Container, Iterable, cast
+
+
+# TODO utilize logging framework instead of `print()`
 
 
 class CodeforcesDatasetBuilder:
@@ -17,29 +21,33 @@ class CodeforcesDatasetBuilder:
 
     def load_metadata(self, contests: list[int]) -> None:
         for contest_id in contests:
-            print("Fetching contest information")
-            self._fetch_contest_info(contest_id)
+            contest = self._fetch_contest_info(contest_id)
+            # contest = (id, name, start_time, duration)
+            end_time = contest[2] + contest[3]
+
             print("Fetching participant information")
             participants = self._fetch_contest_standings(contest_id)
             print("Fetching submission information")
-            self._fetch_contest_submissions(contest_id, participants)
+            self._fetch_contest_submissions(contest_id, end_time, participants)
 
-    def _fetch_contest_info(self, contest_id: int, force=False):
+    def _fetch_contest_info(
+        self, contest_id: int, force=False
+    ) -> tuple[int, str, int, int]:
         if not force and self._is_known_contest(contest_id):
             return  # Don't update the entry if it already exists
 
         retval = self.api.get_contest_standings(contest_id, count=1)
         assert retval["status"] == "OK", f"Invalid API response: {retval['status']}"
-        contest_standings = retval["result"]
+        contest = retval["result"]["contest"]
 
-        contest_name = contest_standings["contest"]["name"]
-        contest_start_time = contest_standings["contest"]["startTimeSeconds"]
-        query = (
-            "INSERT INTO codeforces_contest (id, name, start_time) VALUES (%s, %s, %s)"
-        )
-        values = (contest_id, contest_name, contest_start_time)
+        contest_name = contest["name"]
+        contest_start_time = contest["startTimeSeconds"]
+        contest_duration = contest["durationSeconds"]
+        query = "INSERT INTO codeforces_contest (id, name, start_time, duration) VALUES (%s, %s, %s, %s)"
+        values = (contest_id, contest_name, contest_start_time, contest_duration)
 
         self.cursor.execute(query, values)  # INSERT INTO [...] VALUES [...]
+        return values  # Return the contest information, to prevent query
 
     def _fetch_contest_standings(self, contest_id: int) -> set[str]:
         participants = set()
@@ -73,8 +81,18 @@ class CodeforcesDatasetBuilder:
         return participants
 
     def _fetch_contest_submissions(
-        self, contest_id: int, participants: Container[str] = None
+        self,
+        contest_id: int,
+        end_time: int = None,
+        participants: Container[str] = None,
     ) -> None:
+        if end_time is None:
+            self.cursor.execute(
+                f"SELECT * FROM codeforces_contest WHERE id={contest_id}"
+            )
+            contest = self.cursor.fetchall()[0]  # Calculate the contest end time
+            end_time = contest["start_time"] + contest["duration"]
+
         offset = 1  # Used to store the last row fetched
         while True:
             retval = self.api.get_contest_status(
@@ -84,21 +102,29 @@ class CodeforcesDatasetBuilder:
             for subm in retval["result"]:
                 if len(author := subm["author"]["members"]) > 1:
                     continue
-                
-                handle = author[0]['handle']
+
+                handle = author[0]["handle"]
+                if participants is None and self._is_known_user(handle):
+                    continue  # Handle must be in the database (foreign key)
                 if participants is not None and handle not in participants:
-                    continue
+                    continue  # Ensure the author participated in the contest
+                if subm["creationTimeSeconds"] > end_time:
+                    continue  # Don't accept submissions after the contest has ended
 
                 verdict = (
                     subm["verdict"] if "verdict" in cast(dict, subm).keys() else ""
                 )
                 problem = subm["problem"]["index"]  # Increases readability
-                self.cursor.execute(
-                    "INSERT INTO codeforces_submission (id, contest_id, creation_time,"
-                    "problem, author_handle, programming_language, verdict) VALUES"
-                    f'({subm["id"]}, {contest_id}, {subm["creationTimeSeconds"]}, "{problem}",'
-                    f'"{handle}", "{subm["programmingLanguage"]}", "{verdict}")'
-                )
+                try:
+                    self.cursor.execute(
+                        "INSERT INTO codeforces_submission (id, contest_id, creation_time,"
+                        "problem, author_handle, programming_language, verdict) VALUES"
+                        f'({subm["id"]}, {contest_id}, {subm["creationTimeSeconds"]}, "{problem}",'
+                        f'"{handle}", "{subm["programmingLanguage"]}", "{verdict}")'
+                    )
+                except IntegrityError:
+                    print(f"Duplicate submission detected ({subm['id']})...")
+                    print(subm) # Dump out relevent submission information
             self.cnx.commit()  # Commit all data to the database
 
             if len(retval["result"]) < self.SUBMISSION_BLOCK_SIZE:
@@ -130,10 +156,10 @@ class CodeforcesDatasetBuilder:
             country = user["country"] if "country" in user.keys() else ""
             city = user["city"] if "city" in user.keys() else ""
             rating = user["maxRating"] if "maxRating" in user.keys() else 0
-            registered =  user["registrationTimeSeconds"]
+            registered = user["registrationTimeSeconds"]
             query = "INSERT INTO codeforces_user (handle, country, city, max_rating, registered) VALUES (%s, %s, %s, %s, %s)"
 
-            values = (user['handle'], country, city, rating, registered)
+            values = (user["handle"], country, city, rating, registered)
             self.cursor.execute(query, values)  # INSERT INTO [...] VALUES [...]
 
     def _is_known_user(self, handle: str) -> bool:
@@ -144,3 +170,8 @@ class CodeforcesDatasetBuilder:
     def _is_known_contest(self, contest_id: int) -> bool:
         self.cursor.execute(f"SELECT * FROM codeforces_contest WHERE id={contest_id}")
         return len(self.cursor.fetchall()) > 0
+
+
+class LeetCodeDatasetBuilder:
+    def __init__(self) -> None:
+        pass
