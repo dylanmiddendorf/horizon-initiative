@@ -1,7 +1,8 @@
 CREATE TABLE codeforces_contest (
 	id INTEGER UNSIGNED PRIMARY KEY,
   name VARCHAR(128),
-  start_time INTEGER UNSIGNED
+  start_time INTEGER UNSIGNED,
+  duration INTEGER UNSIGNED
 );
 
 CREATE TABLE codeforces_user (
