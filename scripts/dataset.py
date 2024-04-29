@@ -1,9 +1,10 @@
-from api import CodeforcesAPI, LeetCodeAPI
-import mysql.connector
-from mysql.connector.errors import IntegrityError
-
 import logging
 from typing import Container, Iterable, cast
+
+from api import CodeforcesAPI, LeetCodeAPI
+import mysql.connector
+from mysql.connector.errors import DataError, IntegrityError
+from mysql.connector.types import RowItemType
 
 
 # TODO utilize logging framework instead of `print()`
@@ -17,10 +18,11 @@ class CodeforcesDatasetBuilder:
         self.cnx = mysql.connector.connect(user="root", password="root")
         self.cursor = self.cnx.cursor()  # Used for processing queries
         self.cursor.execute("USE horizon_initiative;")
-        self.api = CodeforcesAPI()  # Connect to the codeforces API
+        self.api = CodeforcesAPI()  # Connect to the Codeforces API
 
     def load_metadata(self, contests: list[int]) -> None:
         for contest_id in contests:
+            print(f"Fetching contest info for: {contest_id}")
             contest = self._fetch_contest_info(contest_id)
             # contest = (id, name, start_time, duration)
             end_time = contest[2] + contest[3]
@@ -33,8 +35,10 @@ class CodeforcesDatasetBuilder:
     def _fetch_contest_info(
         self, contest_id: int, force=False
     ) -> tuple[int, str, int, int]:
-        if not force and self._is_known_contest(contest_id):
-            return  # Don't update the entry if it already exists
+        # Don't update the entry if it already exists
+        contest = self._query_contest(contest_id)
+        if not force and contest:
+            return contest
 
         retval = self.api.get_contest_standings(contest_id, count=1)
         assert retval["status"] == "OK", f"Invalid API response: {retval['status']}"
@@ -70,8 +74,8 @@ class CodeforcesDatasetBuilder:
                 party_memebers = row["party"]["members"]
                 assert len(party_memebers) == 1, "Submission MUST contain one author"
                 handles.append(party_memebers[0]["handle"])
-            self._fetch_user_info(handles)
-            self.cnx.commit()  # Commit all data to the database
+            #self._fetch_user_info(handles)
+            #self.cnx.commit()  # Commit all data to the database
 
             if len(contest_standings["rows"]) < self.AUTHOR_BLOCK_SIZE:
                 break  # All participant standings have been recorded
@@ -124,7 +128,7 @@ class CodeforcesDatasetBuilder:
                     )
                 except IntegrityError:
                     print(f"Duplicate submission detected ({subm['id']})...")
-                    print(subm) # Dump out relevent submission information
+                    print(subm)  # Dump out relevent submission information
             self.cnx.commit()  # Commit all data to the database
 
             if len(retval["result"]) < self.SUBMISSION_BLOCK_SIZE:
@@ -160,18 +164,39 @@ class CodeforcesDatasetBuilder:
             query = "INSERT INTO codeforces_user (handle, country, city, max_rating, registered) VALUES (%s, %s, %s, %s, %s)"
 
             values = (user["handle"], country, city, rating, registered)
-            self.cursor.execute(query, values)  # INSERT INTO [...] VALUES [...]
+            try:
+                self.cursor.execute(query, values)  # INSERT INTO [...] VALUES [...]
+            except DataError:
+                print(f'Invalid author detected ({user["handle"]})...')
+                print(user)
 
     def _is_known_user(self, handle: str) -> bool:
         """Used to determine if a user's metadata exists within the database"""
         self.cursor.execute("SELECT * FROM codeforces_user WHERE handle=%s", (handle,))
         return len(self.cursor.fetchall()) > 0
 
-    def _is_known_contest(self, contest_id: int) -> bool:
+    def _query_contest(self, contest_id: int) -> dict[str, RowItemType] | bool:
         self.cursor.execute(f"SELECT * FROM codeforces_contest WHERE id={contest_id}")
-        return len(self.cursor.fetchall()) > 0
+        retval = self.cursor.fetchall()  # assert len(retval) in [0, 1]
+        return retval[0] if len(retval) > 0 else False
+
+    def __del__(self):
+        # Prevent resource leaks when exiting the program
+        self.cursor.close()
+        self.cnx.disconnect()
 
 
 class LeetCodeDatasetBuilder:
     def __init__(self) -> None:
+        self.cnx = mysql.connector.connect(user="root", password="root")
+        self.cursor = self.cnx.cursor()  # Used for processing queries
+        self.cursor.execute("USE horizon_initiative;")
+        self.api = LeetCodeAPI()  # Connect to the LeetCode API
+
+    def load_metadata(self, contests: list[int]) -> None:
+        pass
+
+    def _fetch_contest_info(
+        self, contest_id: int, force=False
+    ) -> tuple[int, str, int, int]:
         pass
