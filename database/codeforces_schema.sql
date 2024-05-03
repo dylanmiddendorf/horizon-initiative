@@ -7,7 +7,7 @@ CREATE TABLE codeforces_contest (
 
 CREATE TABLE codeforces_user (
   handle VARCHAR(24) PRIMARY KEY,
-  country VARCHAR(64), -- "Heard Island and McDonald Islands"
+  country VARCHAR(64),
   city VARCHAR(32),
   max_rating SMALLINT UNSIGNED,
   registered INTEGER UNSIGNED
@@ -23,20 +23,4 @@ CREATE TABLE codeforces_submission (
   verdict VARCHAR(32),
   FOREIGN KEY (contest_id) REFERENCES codeforces_contest (id),
   FOREIGN KEY (author_handle) REFERENCES codeforces_user (handle)
-);
-
-CREATE TABLE leetcode_contests (
-  id INTEGER UNSIGNED PRIMARY KEY,
-  name VARCHAR(32),
-  slug VARCHAR(32),
-  start_time INTEGER UNSIGNED,
-  duration MEDIUMINT UNSIGNED
-);
-
-CREATE TABLE leetcode_user (
-  handle VARCHAR(24) PRIMARY KEY,
-  country VARCHAR(32),
-  city VARCHAR(32),
-  max_rating SMALLINT UNSIGNED,
-  registered INTEGER UNSIGNED
 );

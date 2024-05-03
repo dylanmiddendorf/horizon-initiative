@@ -1,1 +1,1 @@
-# horizon-initiative
+# Horizon Initiative
