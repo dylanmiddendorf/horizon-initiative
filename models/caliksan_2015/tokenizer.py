@@ -19,11 +19,9 @@ OPERATORS = ("{"  , "}" , "[" , "]" , "#" , "##"  , "("  , ")" ,
 
 
 class Tokenizer:
-    """A naive C++ 17 complaint tokenizer, that assumes the provided source
-    contains valid syntax."""
-
     def __init__(self) -> None:
-        self.tokens = []  # Store the digested tokens
+        self._tokens = []  # Store the digested tokens
+        self._n_comments = 0  # Number of comments
         self.buffer = ""  # Stores tokens between digests
         self.newline_escape = False  # True if newline escape is used in token
         self.mode = NORMAL_MODE
@@ -61,6 +59,7 @@ class Tokenizer:
                 self.mode = MULTI_LINE_COMMENT_MODE
             elif prev == "*" and c == "/" and self.mode == MULTI_LINE_COMMENT_MODE:
                 self.mode = NORMAL_MODE
+                self._n_comments += 1
             elif self.mode == MULTI_LINE_COMMENT_MODE:
                 pass  # Prevent subsequent elif statments from catching literals
 
@@ -69,6 +68,7 @@ class Tokenizer:
                 self.mode = SINGLE_LINE_COMMENT_MODE
             elif c == "\n" and prev != "\\" and self.mode == SINGLE_LINE_COMMENT_MODE:
                 self.mode = NORMAL_MODE
+                self._n_comments += 1
             elif self.mode == SINGLE_LINE_COMMENT_MODE:
                 pass
 
@@ -113,7 +113,11 @@ class Tokenizer:
     def _process_token(self, start: int, end: int, buf: str) -> None:
         token = self._get_token(start, end, buf)
         if token:  # Don't append empty tokens
-            self.tokens.append(token)  # Append the extracted token to the list
+            self._tokens.append(token)  # Append the extracted token to the list
+
+    @property
+    def tokens(self) -> list[str]:
+        return self._tokens
 
 
 class SourceFile:
