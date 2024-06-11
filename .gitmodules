@@ -1,3 +1,0 @@
-[submodule "models/caliskan_2015/lib/log.c"]
-	path = models/caliskan_2015/lib/log.c
-	url = https://github.com/rxi/log.c.git

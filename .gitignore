@@ -3,5 +3,9 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Binary files
+bin/
+obj/
+
 # Dataset
 dataset/

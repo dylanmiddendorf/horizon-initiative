@@ -1,40 +1,54 @@
-# Compiler and flags
+# Define the compiler
 CC = gcc
-CFLAGS = -Wall -Wextra -Werror -Iinclude
 
-# Directories
-SRC_DIR = src
-OBJ_DIR = obj
-BIN_DIR = bin
+# Define compiler flags
+CFLAGS = -Wall -Wextra -Werror -Iinclude -Ilib/log.c/src
 
-# Target executable
-TARGET = $(BIN_DIR)/caliskan_2015
+# Define the directories
+SRC_PATH := src
+INC_PATH := include
+LIB_PATH := lib
+BIN_PATH := bin
+OBJ_PATH := obj
 
-# Find all source files in SRC_DIR
-SRC_FILES = $(shell find $(SRC_DIR) -name '*.c')
-OBJ_FILES = $(patsubst $(SRC_DIR)/%.c, $(OBJ_DIR)/%.o, $(SRC_FILES))
+# Define the output executable
+TARGET = $(BIN_PATH)/caliskan_2015
 
-# Default target
+# Find all the source files
+SRCFILES = $(shell find $(SRC_PATH) -name '*.c')
+OBJFILES = $(patsubst $(SRC_PATH)/%.c, $(OBJ_PATH)/%.o, $(SRCFILES))
+
+# Libraries (optional, can add more libraries if needed)
+LIBS = -lm
+
+# Default goal
 all: $(TARGET)
 
-# Linking the final executable
-$(TARGET): $(OBJ_FILES) | $(BIN_DIR)
-	$(CC) $(CFLAGS) -o $@ $^
+# Build the target executable
+$(TARGET): $(OBJFILES) | $(BIN_PATH)
+	$(CC) $(OBJFILES) -o $@ $(LIBS)
 
-# Compiling each source file to an object file
-$(OBJ_DIR)/%.o: $(SRC_DIR)/%.c | $(OBJ_DIR)
-	$(CC) $(CFLAGS) -c -o $@ $<
+# Compile source files to object files
+$(OBJ_PATH)/%.o: $(SRC_PATH)/%.c | $(OBJ_PATH)
+	$(CC) $(CFLAGS) -c $< -o $@
 
-# Create directories if they don't exist
-$(OBJ_DIR):
-	mkdir -p $(OBJ_DIR)
+# Create build and bin directories if they don't exist
+$(OBJ_PATH):
+	mkdir -p $(OBJ_PATH)
 
-$(BIN_DIR):
-	mkdir -p $(BIN_DIR)
+$(BIN_PATH):
+	mkdir -p $(BIN_PATH)
 
-# Clean up generated files
+# Clean build files
 clean:
-	rm -rf $(OBJ_DIR) $(BIN_DIR)
+	rm -rf $(OBJ_PATH) $(BIN_PATH)
+
+# Include dependencies (optional)
+-include $(OBJFILES:.o=.d)
+
+# Generate dependencies (optional)
+$(OBJ_PATH)/%.d: $(SRCDIR)/%.c
+	$(CC) $(CFLAGS) -MM -MT $(patsubst %.c, $(OBJ_PATH)/%.o, $<) $< > $@
 
 # Phony targets
 .PHONY: all clean
