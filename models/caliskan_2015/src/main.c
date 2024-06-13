@@ -1,45 +1,23 @@
 #include <stdio.h>
+#include <string.h>
 
-#include "map.h"
-#include "vector.h"
-#include "tokenizer.h"
-
-void test_map() {
-  map_t *m = map_init();
-  map_put(m, "alpha", 1);
-  map_put(m, "beta", 2);
-  map_put(m, "charlie", 3);
-  map_put(m, "delta", 4);
-  map_put(m, "echo", 5);
-  map_put(m, "foxtrot", 6);
-  map_put(m, "golf", 7);
-  printf("%d\n", map_get(m, "charlie"));
-}
-
-VECTOR_TYPEDEF_INIT(vec, char *)
-VECTOR_INIT(vec, char *)
-
-void test_vec() {
-  vec_t *v = vec_new();
-  vec_push_back(v, "alpha");
-  vec_push_back(v, "beta");
-  vec_push_back(v, "charlie");
-  vec_push_back(v, "delta");
-  vec_push_back(v, "echo");
-  for(size_t i = 0; i < v->size; ++i)
-    printf("index %lu -> %s\n", i, vec_at(v, i));
-  vec_delete(v);
-}
-
-void test_tokenizer() {
-  ctok_t *ctok = ctok_init("dataset/10tus_250649710.cpp");
-  ctok_tokenize(ctok); /* Tokenize the source file */
-  for(size_t i = 0; i < ctok->tokens->size; ++i)
-    printf("\"%s\", ", ctok->tokens->data[i]);
-}
+#include "data_loader.h"
+#include "features/layout.h"
 
 int main(int argc, char *argv[]) {
-  (void) argc, (void) argv;
-  test_tokenizer();
+  (void)argc, (void)argv;
+  FILE *csv = fopen("layout_features.csv", "wt");
+  fprintf(csv, "id,f0,f1,f2,f3,f4,f5\n");
+
+  char dir_path[] = "/home/ubuntu/research/horizon-initiative/dataset";
+  dataset_t *d = hri_dataset_init(dir_path);
+  hri_dataset_enumerate(d, s) {
+    printf("e=%s, i=%ld\n", s.e, s.i);
+    double *f = hri_layout_features(s.e);
+    fprintf(csv, "%s,%lf,%lf,%lf,%lf,%d,%d\n", s.e, f[0], f[1], f[2], f[3],
+            (int)f[4], (int)f[5]);
+  }
+
+  fclose(csv);
   return 0;
 }

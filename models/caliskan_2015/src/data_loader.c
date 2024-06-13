@@ -11,6 +11,7 @@ dataset_t *hri_dataset_init(const char *path) {
   DIR *directory = NULL;
   struct dirent *directory_entry = NULL;
   dataset_t *head = NULL, *builder = NULL;
+  size_t path_length = strlen(path);
 
   if (!path || !strlen(path)) {
     log_error(
@@ -42,12 +43,15 @@ dataset_t *hri_dataset_init(const char *path) {
       exit(EXIT_FAILURE);
     }
 
-    builder->entry = malloc(strlen(directory_entry->d_name) + 1);
+    builder->entry = malloc(strlen(directory_entry->d_name) + path_length + 2);
     if (!builder->entry) {
       log_fatal("Unable to allocate the node's data (d_name).\n");
       exit(EXIT_FAILURE);
     }
 
-    strcpy(builder->entry, directory_entry->d_name);
+    sprintf(builder->entry, "%s/%s", path, directory_entry->d_name); 
+    builder->entry[strlen(directory_entry->d_name) + path_length + 1] = '\0';
   }
+
+  return head;
 }

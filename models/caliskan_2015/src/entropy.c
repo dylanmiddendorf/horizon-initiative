@@ -65,6 +65,7 @@ double calculate_information_gain(float *feature, int *key, int num_samples,
   return total_entropy - conditional_entropy;
 }
 
+/*
 int main() {
   int num_samples = 6;     // Example number of samples
   int num_features = 3;    // Example number of features
@@ -98,4 +99,4 @@ int main() {
   }
 
   return 0;
-}
+}*/
