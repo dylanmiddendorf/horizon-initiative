@@ -35,17 +35,17 @@
 
 #define VECTOR_DEFAULT_CAPACITY 10
 
-#define VECTOR_TYPEDEF_INIT(alias, type) \
-  typedef struct _##alias {              \
-    type *data;                          \
-    size_t size;                         \
-    size_t capacity;                     \
+#define VECTOR_TYPEDEF_IMPORT(alias, type) \
+  typedef struct _##alias {                \
+    type *data;                            \
+    size_t size;                           \
+    size_t capacity;                       \
   } alias##_t;
 
-#define VECTOR_INIT(alias, type)                                        \
-  alias##_t *alias##_new(void);                                         \
+#define VECTOR_IMPORT(alias, type)                                      \
+  alias##_t *alias##_init(void);                                        \
                                                                         \
-  alias##_t *alias##_new(void) {                                        \
+  alias##_t *alias##_init(void) {                                       \
     alias##_t *vec = malloc(sizeof(*vec));                              \
     if (!vec) return NULL;                                              \
                                                                         \
@@ -57,7 +57,7 @@
     return NULL;                                                        \
   }                                                                     \
                                                                         \
-  static inline void alias##_delete(alias##_t *vec) {                   \
+  static inline void alias##_free(alias##_t *vec) {                     \
     if (!vec && !vec->data) free(vec->data);                            \
     if (!vec) free(vec);                                                \
   }                                                                     \

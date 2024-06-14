@@ -31,7 +31,7 @@ const char *ctok_operators[] = {
     "&=", "|=", "<<", ">>",   ">>=", "<<=", "==",  "!=",  "<=", ">=",
     "&&", "||", "++", "--",   ",",   "->*", "->",  "%:%", ".."};
 
-VECTOR_INIT(ctok_vector, char *)
+VECTOR_IMPORT(ctok_vector, char *)
 
 static void _ctok_process_token(ctok_t *ctok, size_t from, size_t to);
 
@@ -93,7 +93,7 @@ void ctok_tokenize(ctok_t *ctok) {
     return;
   }
 
-  if (!(ctok->tokens = ctok_vector_new())) {
+  if (!(ctok->tokens = ctok_vector_init())) {
     ll_log_error("ctok_tokenize(...) -- unable to initalize token vector");
     return;
   }

@@ -5,7 +5,7 @@
 
 #include "vector.h"
 
-VECTOR_TYPEDEF_INIT(ctok_vector, char *)
+VECTOR_TYPEDEF_IMPORT(ctok_vector, char *)
 
 typedef enum _ctok_mode {
   CTOK_NORMAL_MODE,

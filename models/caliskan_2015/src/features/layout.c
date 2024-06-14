@@ -1,8 +1,11 @@
+#include "features/layout.h"
+
 #include <ctype.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <sys/stat.h>
 
+#include "log_lite.h"
 #include "tokenizer.h"
 
 double* hri_layout_features(const char* fname) {
@@ -54,13 +57,19 @@ double* hri_layout_features(const char* fname) {
     }
 
     if (i > 0 && fbuffer[i - 1] == '\n') {
+      /* File aganostic solution for line-endings (CRLF & LF) */
       if (fbuffer[i] == '\n') empty_line_count++;
+      if (fbuffer[i] == '\r') empty_line_count++;
       if (fbuffer[i] == '\t') tab_start_lines++;
       if (fbuffer[i] == ' ') space_start_lines++;
     }
   }
 
   double* features = calloc(sizeof(*features), 6);
+  if (!features) {
+    ll_log_critical("Unable to allocate feature vector...\n");
+  }
+
   features[0] = (double)tab_count / statbuf.st_size;
   features[1] = (double)space_count / statbuf.st_size;
   features[2] = (double)empty_line_count / statbuf.st_size;
