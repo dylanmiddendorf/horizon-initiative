@@ -15,24 +15,16 @@ static inline bool _bucket_is_empty(bucket_t *b);
 static inline uint32_t _bucket_set_value(bucket_t *b, uint32_t value);
 static inline uint32_t _bucket_get_value(bucket_t *b);
 
-struct _bucket {
-  char *key;
-  uint32_t value;
-
-  uint32_t hash;
-  bucket_t *next;
-};
-
 map_t *map_init() {
   map_t *map = _map_init(MAP_DEFAULT_INITIAL_CAPACITY);
 
   /* Assign all constants after initalization */
   map->cellar_ratio = MAP_DEFAULT_CELLAR_RATIO;
   map->load_factor = MAP_DEFAULT_LOAD_FACTOR;
-  map->threshold = map->table_capacity * map->load_factor;
 
   map->cellar_capacity = map->capacity * map->cellar_ratio;
   map->table_capacity = map->capacity - map->cellar_capacity;
+  map->threshold = map->table_capacity * map->load_factor;
   return map;
 }
 
@@ -50,8 +42,12 @@ static map_t *_map_init(uint32_t initial_capacity) {
     return NULL;
   }
 
-  map_clear(map);
   return map;
+}
+
+void map_free(map_t *map) {
+  if(map && map->table) free(map->table);
+  if(map) free(map);
 }
 
 uint32_t map_get(map_t *map, char *key) {
@@ -59,13 +55,42 @@ uint32_t map_get(map_t *map, char *key) {
 }
 
 uint32_t map_put(map_t *map, char *key, uint32_t value) {
-  return _bucket_set_value(_bucket_find(map, key, false), value);
+  return _bucket_set_value(_bucket_find(map, key, true), value);
 }
 
 map_t *map_clear(map_t *map) {
   /* Populate all the buckets will null pointers */
-  for (uint32_t i = 0; i < map->capacity; ++i) map->table[i].next = NULL;
+  for (uint32_t i = 0; i < map->capacity; ++i) {
+    map->table[i].key = NULL;
+    map->table[i].next = NULL;
+  }
   return map;
+}
+
+/**
+ * @brief Retrieves the next non-empty bucket in the map.
+ *
+ * This function is used to iterate through the buckets in a map data structure.
+ * If the provided bucket pointer `b` is `NULL`, the function returns the first
+ * non-empty bucket in the map. Otherwise, it returns the next non-empty bucket
+ * following the one pointed to by `b`. If there are no more non-empty buckets,
+ * the function returns `NULL`.
+ *
+ * @param map A pointer to the map structure.
+ * @param b A pointer to the current bucket. If NULL, iteration starts from the
+ * beginning.
+ * @return A pointer to the next non-empty bucket, or NULL if there are no more
+ * buckets.
+ *
+ * @note This function assumes that the map structure and its table are properly
+ * initialized. It is the caller's responsibility to ensure the map pointer is
+ * valid.
+ */
+bucket_t *map_next(map_t *map, bucket_t *b) {
+  if (!map) return NULL;
+  for (uint32_t i = b ? b - map->table + 1: 0; i < map->capacity; ++i)
+    if (!_bucket_is_empty(map->table + i)) return map->table + i;
+  return NULL;
 }
 
 static map_t *_map_rehash(map_t *map) {
@@ -99,9 +124,9 @@ static bucket_t *_bucket_find(map_t *map, char *key, bool create) {
   for (; chain; prev = chain, chain = chain->next)
     if (hash == chain->hash && strcmp(key, chain->key) == 0) return chain;
 
-  if (create) return NULL; /* Bucket does not exist... */
+  if (!create) return NULL; /* Bucket does not exist... */
 
-    if (_bucket_is_empty(prev)) {
+  if (_bucket_is_empty(prev)) {
     chain = prev, prev = NULL;
     goto bucket_init;
   }
@@ -111,6 +136,7 @@ static bucket_t *_bucket_find(map_t *map, char *key, bool create) {
     goto bucket_init; /* DRY principles */
   }
 
+  chain = prev;
   do {
     /* bucket_index = (bucket - base_bucket) / sizeof(bucket_t) */
     chain = &map->table[(chain - map->table + 1) % map->table_capacity];

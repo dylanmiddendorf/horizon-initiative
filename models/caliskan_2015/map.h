@@ -5,6 +5,13 @@
 #include <stdint.h>
 
 typedef struct _bucket bucket_t;
+struct _bucket {
+  char *key;
+  uint32_t value;
+
+  uint32_t hash;
+  bucket_t *next;
+};
 
 typedef struct _map {
   bucket_t *table;
@@ -25,9 +32,11 @@ typedef struct _map {
 } map_t;
 
 map_t *map_init();
+void map_free(map_t *map);
 uint32_t map_get(map_t *map, char *key);
 uint32_t map_put(map_t *map, char *key, uint32_t value);
 map_t *map_clear(map_t *map);
 uint32_t djb2_hash(const char *s);
+bucket_t *map_next(map_t *map, bucket_t *bucket_t);
 
 #endif
