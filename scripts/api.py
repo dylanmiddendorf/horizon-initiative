@@ -49,7 +49,10 @@ class CodeforcesAPI:
 
         if response.status != 200:
             raise ValueError(f"Invalid HTTP status recived: {response.status}")
-        return json.load(response)
+
+        api_response = json.load(response)
+        assert api_response["status"] == "OK"
+        return api_response
 
     def get_contest_standings(
         self, contest_id: int, offset: int = 1, count: int = 25, show_unoffical=False

@@ -8,6 +8,8 @@ from mysql.connector.types import RowItemType
 
 
 # TODO utilize logging framework instead of `print()`
+# TODO binary search for larger contests
+# TODO enable users to specify verbosity
 
 
 class CodeforcesDatasetBuilder:
@@ -15,22 +17,28 @@ class CodeforcesDatasetBuilder:
     SUBMISSION_BLOCK_SIZE = 2048
 
     def __init__(self) -> None:
-        self.cnx = mysql.connector.connect(user="root", password="root")
+        self.cnx = mysql.connector.connect(
+            host="172.24.112.1", user="wsl_root", password="root"
+        )
         self.cursor = self.cnx.cursor()  # Used for processing queries
         self.cursor.execute("USE horizon_initiative;")
         self.api = CodeforcesAPI()  # Connect to the Codeforces API
 
     def load_metadata(self, contests: list[int]) -> None:
         for contest_id in contests:
-            print(f"Fetching contest info for: {contest_id}")
-            contest = self._fetch_contest_info(contest_id)
-            # contest = (id, name, start_time, duration)
-            end_time = contest[2] + contest[3]
+            try:
+                print(f"Fetching contest info for: {contest_id}")
+                contest = self._fetch_contest_info(contest_id)
+                # contest = (id, name, start_time, duration)
+                end_time = contest[2] + contest[3]
 
-            print("Fetching participant information")
-            participants = self._fetch_contest_standings(contest_id)
-            print("Fetching submission information")
-            self._fetch_contest_submissions(contest_id, end_time, participants)
+                print("Fetching participant information")
+                participants = self._fetch_contest_standings(contest_id)
+                print("Fetching submission information")
+                self._fetch_contest_submissions(contest_id, end_time, participants)
+            except Exception as e:
+                print(e)
+                print(f"Error fetching info from contest {contest_id}")
 
     def _fetch_contest_info(
         self, contest_id: int, force=False
@@ -74,13 +82,12 @@ class CodeforcesDatasetBuilder:
                 party_memebers = row["party"]["members"]
                 assert len(party_memebers) == 1, "Submission MUST contain one author"
                 handles.append(party_memebers[0]["handle"])
-            #self._fetch_user_info(handles)
-            #self.cnx.commit()  # Commit all data to the database
-
+            self._fetch_user_info(handles)
+            self.cnx.commit()  # Commit all data to the database
+            participants.update(handles)
             if len(contest_standings["rows"]) < self.AUTHOR_BLOCK_SIZE:
                 break  # All participant standings have been recorded
 
-            participants.update(handles)
             offset += self.AUTHOR_BLOCK_SIZE
         return participants
 
@@ -90,6 +97,9 @@ class CodeforcesDatasetBuilder:
         end_time: int = None,
         participants: Container[str] = None,
     ) -> None:
+        if len(participants) == 0:
+            print(f"No participants found for contest {contest_id}")
+            return
         if end_time is None:
             self.cursor.execute(
                 f"SELECT * FROM codeforces_contest WHERE id={contest_id}"
@@ -97,18 +107,37 @@ class CodeforcesDatasetBuilder:
             contest = self.cursor.fetchall()[0]  # Calculate the contest end time
             end_time = contest["start_time"] + contest["duration"]
 
-        offset = 1  # Used to store the last row fetched
+        low_offset, high_offset = 0, 5_000_000  # Used to store the last row fetched
+
+        # Binary Search to prevent linearly probing through up-to 1.4m submissions
+        while (high_offset - low_offset) > 2000:
+            offset = low_offset + (high_offset - low_offset) // 2
+            print(offset)
+            retval = self.api.get_contest_status(contest_id, offset=offset, count=1)
+            assert retval["status"] == "OK", "Invalid API response"
+            if len(retval["result"]) == 0:
+                high_offset = offset - 1
+                continue
+
+            assert len(retval["result"][0]["author"]["members"]) == 1
+            submission_time = retval["result"][0]["creationTimeSeconds"]
+            if submission_time < end_time:
+                high_offset = offset - 1
+            else:
+                low_offset = offset + 1
+        offset = max(1, offset - 2001)
+        print(f"final offset: {offset}")
         while True:
             retval = self.api.get_contest_status(
                 contest_id, offset=offset, count=self.SUBMISSION_BLOCK_SIZE
             )
-            assert retval["status"] == "OK", "Invalid API response"
+
             for subm in retval["result"]:
                 if len(author := subm["author"]["members"]) > 1:
                     continue
 
                 handle = author[0]["handle"]
-                if participants is None and self._is_known_user(handle):
+                if handle is not None and not self._is_known_user(handle):
                     continue  # Handle must be in the database (foreign key)
                 if participants is not None and handle not in participants:
                     continue  # Ensure the author participated in the contest
@@ -126,14 +155,17 @@ class CodeforcesDatasetBuilder:
                         f'({subm["id"]}, {contest_id}, {subm["creationTimeSeconds"]}, "{problem}",'
                         f'"{handle}", "{subm["programmingLanguage"]}", "{verdict}")'
                     )
-                except IntegrityError:
-                    print(f"Duplicate submission detected ({subm['id']})...")
-                    print(subm)  # Dump out relevent submission information
+                except IntegrityError as e:
+                    # print(f"Duplicate submission detected ({subm['id']})...")
+                    # print(subm)  # Dump out relevent submission information
+                    pass
             self.cnx.commit()  # Commit all data to the database
 
             if len(retval["result"]) < self.SUBMISSION_BLOCK_SIZE:
                 break  # All participant submissions have been recorded
             offset += self.SUBMISSION_BLOCK_SIZE
+            if offset % 0x4_000:
+                print(f"Processed: {offset}")
 
     def _fetch_user_submissions(self, contest: int, handle: str) -> None:
         retval = self.api.get_contest_status(contest, handle, count=128)
@@ -168,7 +200,7 @@ class CodeforcesDatasetBuilder:
                 self.cursor.execute(query, values)  # INSERT INTO [...] VALUES [...]
             except DataError:
                 print(f'Invalid author detected ({user["handle"]})...')
-                print(user)
+        self.cnx.commit()
 
     def _is_known_user(self, handle: str) -> bool:
         """Used to determine if a user's metadata exists within the database"""
