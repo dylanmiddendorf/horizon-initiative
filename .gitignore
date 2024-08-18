@@ -10,3 +10,6 @@ obj/
 # Workspace specific
 .vscode/
 dataset/
+
+# Quick and dirty fix for data files
+*.csv
