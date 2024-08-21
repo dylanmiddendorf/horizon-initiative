@@ -1,36 +1,186 @@
+"""Classes for reading and writing Joern flatgraph databases."""
+
 from __future__ import annotations
 
 import json
 import os
+import re
 import struct
 
 from os import PathLike
-from typing import Any, BinaryIO, Optional, Union
+from typing import Any, BinaryIO, Literal, Optional, Union, cast
 
 import zstandard as zstd
 
 MAGIC_BYTES = b"FLT GRPH"
 HEADER_FORMAT = f"<{len(MAGIC_BYTES)}sQ"
+
 HEADER_SIZE = struct.calcsize(HEADER_FORMAT)
-assert HEADER_SIZE == 16  # Verify header format is right size
+assert HEADER_SIZE == 0x10  # Verify header format is right size
+
+INCOMING = 0
+OUTGOING = 1
+
+UINT32_MAX = 0xFFFF_FFFF
+"""A constant holding the maximum value of an unsigned 32-bit integer."""
+
+# TODO: provide support for graph deletions
+# TODO: de-couple the file open from the constructor, becuase future releases
+#       might support several non-compatible versions of Flat Graph Databases
 
 
-class DeserializationError(IOError):
-    pass
+class DeserializationError(ValueError):
+    """
+    Exception raised for errors encountered during the deserialization process.
+    """
 
 
-class FlatGraph:
+class Edge:
+    def __init__(
+        self,
+        name: str,
+        src: Node,
+        dst: Node,
+        direction: Literal[1, 2],
+    ) -> None:
+        self.name = name
+        self._source = src
+        self._destination = dst
+        self.direction = direction
+
+
+class Node:
+    def __init__(
+        self,
+        name: str,
+        edges: Optional[set[Edge]] = None,
+        properties: Optional[dict[str, Any]] = None,
+    ) -> None:
+        self._name = name
+
+        self._edges = edges if edges else set()
+        self._properties = properties if properties else {}
+
+    def add_edge(self, edge: Edge) -> None:
+        self._edges.add(edge)
+
+    def add_property(self, name: str, value) -> None:
+        if name in self._properties:
+            if not isinstance(self._properties[name], list):
+                previous_value = self._properties[name]
+                self._properties[name] = [previous_value]
+            self._properties[name].append(value)
+        else:
+            self._properties[name] = value
+
+    @property
+    def in_neighbors(self) -> list[Edge]:
+        return list(filter(lambda e: e.direction == INCOMING, self._edges))
+
+    @property
+    def out_neighbors(self) -> list[Edge]:
+        return list(filter(lambda e: e.direction == OUTGOING, self._edges))
+
+
+class Schema:
+    def __init__(
+        self,
+        nodes: list[list[Node]],
+        index: dict[str, int],
+    ) -> None:
+        self._nodes = nodes
+        self._index = index
+
+    @classmethod
+    def from_graph(cls, graph: Graph) -> Schema:
+        manifest = graph.manifest  # Load manifest
+
+        nodes: list[list[Node]] = []
+        node_index: dict[str, int] = {}
+        for idx, node in enumerate(manifest["nodes"]):
+            node_index[node_label := node["nodeLabel"]] = idx
+            nodes.append([Node(node_label) for _ in range(node["nnodes"])])
+
+        cls._deserialize_edges(graph, nodes, node_index)
+        cls._deserialize_properties(graph, nodes, node_index)
+
+        return Schema(nodes, node_index)
+
+    @staticmethod
+    def _deserialize_edges(
+        graph: Graph,
+        nodes: list[list[Node]],
+        node_index: dict[str, int],
+    ) -> None:
+        for edge in graph.manifest["edges"]:
+            node_edge_counts = graph._zstd_decompress(**edge["qty"])
+            neighbors = graph._zstd_decompress(**edge["neighbors"])
+
+            name, src_node_type = edge["edgeLabel"], node_index[edge["nodeLabel"]]
+
+            idx = 0  # Iteratively access the neighbors
+            for src_node_idx, edge_count in enumerate(node_edge_counts):
+                src = cast(Node, nodes[src_node_type][src_node_idx - 1])
+                if edge_count:
+                    for idx in range(idx, idx + edge_count):
+                        dst_node_idx, dst_node_type = neighbors[idx]
+                        dst = nodes[dst_node_type][dst_node_idx]
+                        src.add_edge(Edge(name, src, dst, edge["inout"]))
+                    idx += 1
+
+    @staticmethod
+    def _deserialize_properties(
+        graph: Graph,
+        nodes: list[list[Node]],
+        node_index: dict[str, int],
+    ) -> None:
+        for prop in graph.manifest["properties"]:
+            node_property_counts = graph._zstd_decompress(**prop["qty"])
+            properties = graph._zstd_decompress(**prop["property"])
+            name, node_type = prop["propertyLabel"], node_index[prop["nodeLabel"]]
+
+            idx = 0
+            for node_idx, property_count in enumerate(node_property_counts):
+                node = cast(Node, nodes[node_type][node_idx - 1])
+                if property_count:
+                    for idx in range(idx, idx + property_count):
+                        node.add_property(name, properties[idx])
+                    idx += 1
+
+
+class Graph:
     def __init__(
         self,
         name: Optional[Union[str, bytes, PathLike]] = None,
-        mode: str = "r",
+        mode: Literal["r", "w", "a", "x"] = "r",
         fileobj: Optional[BinaryIO] = None,
     ) -> None:
+        if not name and not fileobj:
+            raise ValueError("nothing to open")
 
-        if not fileobj:
-            assert name is not None  # Last resort fail-safe
-            fileobj = open(name, "rb")  # managed in __exit__, so pylint: disable=R1732
+        modes = {"r": "rb", "a": "r+b", "w": "wb", "x": "xb"}
+        if mode not in modes:
+            raise ValueError("unsupported file mode")
+
+        if mode in {"w", "a", "x"}:
+            # TODO: add write and read/write capabilities
+            raise NotImplementedError()
+        self.mode, self._mode = mode, modes[mode]
+
+        if fileobj is None:
+            # If append mode fails due to the absence of the file, switch to
+            # write mode. Users may verify the mode to determine if a fallback
+            # to write occurred.
+            if self.mode == "a" and not os.path.exists(name):
+                self.mode, self._mode = "w", "wb"
+
+            # Binary I/O, so pylint: disable-next=unspecified-encoding
+            fileobj = open(name, modes[mode])
+            self._external_fileobj = False
         else:
+            # Attempt to retrieve the name from the stream. If not provided,
+            # execution can continue, as it is primarily used for object
+            # serialization in `__str__` and `__repr__` methods.
             if (
                 name is None
                 and hasattr(fileobj, "name")
@@ -38,67 +188,33 @@ class FlatGraph:
             ):
                 name = fileobj.name
 
-        self.name = os.path.abspath(name) if name else None
-        self.fileobj = fileobj
+            # Infer the file mode from the stream if available to avoid obscure
+            # errors during execution; otherwise the parameter is used.
+            if hasattr(fileobj, "mode"):
+                # Verify that the file mode is recognizable
+                assert re.fullmatch(r"(?:a|x|r\+?|w\+?)b", fileobj.mode)
+                self._mode = fileobj.mode
 
-        # Internal structures (initalized during first usage)
-        self._pool = None
+            self._external_fileobj = True
+
+        self.name, self.fileobj = name, fileobj
+
+        # Delcare internal structures (initalization happens upon first usage)
+        self._schema = None
         self._manifest = None
+        self._string_pool = None
 
-    @classmethod
-    def open(
-        cls,
-        name: Optional[Union[str, bytes, PathLike]] = None,
-        mode: str = "r",
-        fileobj: Optional[BinaryIO] = None,
-        **kwargs,
-    ) -> FlatGraph:
-        """Opens a flat graph database for reading, writing, or appending.
-
-        This method serves as the primary interface for creating and managing
-        flat graph databases. To interact with a database, either a file name
-        or an existing I/O stream must be provided.
-
-        Args:
-            name (str | bytes | os.PathLike | None): The name of the flat graph
-                database to open or create. Can be a string, bytes, or a
-                path-like object.
-            mode (str, default="r"): The mode in which to open the file.
-                Allowed values are 'r' for reading, 'a' for appending, 'w' for
-                writing, and 'x' for creating a new file exclusively.
-            fileobj (BinaryIO | None): An existing binary I/O stream
-                representing the flat graph database. This takes precedence
-                over `name`.
-
-        Returns:
-            FlatGraph: An instance of the FlatGraph class representing the
-                opened database.
-
-        Raises:
-            ValueError: If neither `name` nor `fileobj` is provided.
-            FileExistsError: If `mode` is 'x' and the file already exists.
-        """
-
-        if not name and not fileobj:
-            raise ValueError(
-                "Both 'name' and 'fileobj' parameters were not provided. Please pass "
-                "a valid file path as 'name', or an open file-like object as 'fileobj'."
-            )
-
-        if mode != "r":  # Forward compatability
-            raise NotImplementedError("unsupported file mode")
-
-        return cls(name, mode, fileobj)
+    def close(self) -> None:
+        """Close the database's underlying file descriptor/stream."""
+        self.fileobj.close()
 
     @property
     def manifest(self) -> dict[str, Any]:
+        """Get the graph's manifest."""
+
         if self._manifest is not None:
             return self._manifest
 
-        # The manifest's offset can be found within the file's header, which is
-        # always the first's 16 (0x10) bytes of the graph. This header consists
-        # of a 8-byte file signature, immediatly followed byte an unsigned long
-        # long containing the manifest's offset within the file.
         self.fileobj.seek(0, os.SEEK_SET)
         header = self.fileobj.read(HEADER_SIZE)
         if len(header) < HEADER_SIZE:
@@ -122,79 +238,131 @@ class FlatGraph:
 
     @property
     def pool(self):
-        if self._pool is not None:
-            return self._pool
-        self._pool = []  # Only try to deserialize once
+        """Get the graph's string pool."""
+
+        if self._string_pool is not None:
+            return self._string_pool
+        self._string_pool = []  # Only try to deserialize once
         manifest = self.manifest  # Load graph's manifest
 
-        # The graph's pool is split among two (2) compressed ZStandard streams.
-        # The first stream, `stringPoolLength`, contains information regarding
-        # the length of each entry, and consequently, the offset of each as
-        # well. The second stream, `stringPoolBytes`, contains all of the
-        # strings concatinated. All important metadata regarding the stream
-        # type, offset, compressed length, and decompressed length are stored
-        # within the manifest.
-
-        index_metadata = manifest["stringPoolLength"]
-        pool_metadata = manifest["stringPoolBytes"]
-
         # Parse the pool's index (`stringPoolLength`)
-        index_offset = index_metadata["startOffset"]
-        index_length = index_metadata["compressedLength"]
-        index = self._zstd_decompress(index_offset, index_length)
+        index = self._zstd_decompress(**manifest["stringPoolLength"])
 
         # Parse the pool's strings (`stringPoolBytes`)
-        pool_offset = pool_metadata["startOffset"]
-        pool_length = pool_metadata["compressedLength"]
-        pool = self._zstd_decompress(pool_offset, pool_length)
+        pool = self._zstd_decompress(**manifest["stringPoolBytes"])
 
         # Ensure that the stream has been correctly decompressed
-        assert len(pool) == pool_metadata["decompressedLength"]
-        assert len(index) == index_metadata["decompressedLength"]
-
-        # Process the index into a collection of 32-bit unsigned integers
-        if index_metadata["decompressedLength"] % 4:
-            raise DeserializationError()
-        index_entry_count = index_metadata["decompressedLength"] // 4
-        index = struct.unpack(f"<{index_entry_count}I", index)
-        assert len(pool) == sum(index)  # Additional error checking :)
+        assert len(pool) == manifest["stringPoolBytes"]["decompressedLength"]
+        assert sum(index) == manifest["stringPoolBytes"]["decompressedLength"]
 
         offset = 0  # Running offset for `stringPoolBytes` substrings
         for length in index:
-            self._pool.append(pool[offset : offset + length].decode())
+            self._string_pool.append(pool[offset : offset + length].decode())
             offset += length  # Prepare the offset for the next string
-        return self._pool
+        return self._string_pool
 
-    def close(self) -> None:
-        """Close the underlying file descriptor associated with this graph."""
-        self.fileobj.close()
+    @property
+    def schema(self):
+        """Get the graph's schema."""
+        if self._schema is None:
+            self._schema = Schema.from_graph(self)
+        return self._schema
 
-    def _zstd_decompress(self, offset: int, length: int) -> bytes:
-        """
-        Decompresses a ZStandard stream starting at a specified offset.
+    # The variable names in this method are intentionally aligned with the keys
+    # found in the databases manifest/schema. This design choice enables
+    # callers to invoke `self._zstd_decompress(**foo)` directly, without the
+    # need to extract each argument individually. Additionally, one of the four
+    # keys is "type", which redefines the builtin `type`. Therefore,
+    # pylint: disable=invalid-name,redefined-builtin
+    def _zstd_decompress(
+        self,
+        type: Literal["bool", "int", "string", "ref", "byte"],
+        startOffset: int,
+        compressedLength: int,
+        decompressedLength: Optional[int] = None,
+    ) -> Union[tuple[bool], tuple[int], tuple[str], tuple[tuple[int, int]], bytes]:
+        """Decompress a ZStandard stream within the database.
+
+        This method provides a standardized interface for decompressing
+        ZStandard streams of various data types. It is primarily used during
+        the deserialization of the database's manifest, enabling efficient
+        extraction of quantities, neighbors, and properties from JSON objects.
+
+        To decompress a stream at a specific offset, specify the `startOffset`
+        and `compressedLength`. The `type` parameter determines the format of
+        the decompressed data. For raw bytes, use "byte". For other types, the
+        stream is parsed into a tuple of bools, integers, strings, or
+        references (node index and type pairs).
 
         Args:
-          offset (int): The absolute byte offset within the file where the
-            ZStandard stream begins.
-          length (int): The compressed length of the ZStandard stream in bytes.
+            type (Literal["bool", "int", "string", "ref", "byte"]): The data
+                type of the compressed stream.
+            startOffset (int): The absolute offset of the ZStandard stream
+                within the file.
+            compressedLength (int): The length of the compressed ZStandard
+                stream.
+            decompressedLength (Optional[int]): The expected length of the
+                decompressed data.
 
         Raises:
-          DeserializationError: If the end-of-file (EOF) is encountered prematurely
-            during decompression.
-        """
-        self.fileobj.seek(offset)  # Align stream's cursor to the offset
+            DeserializationError: If the decompressed stream's length does not
+                match the expected length, or if the stream's decompressed
+                length is not aligned to the specified type's width.
+            ValueError: If the specified type is not one of the supported
+                options.
 
-        zstd_stream = self.fileobj.read(length)
-        if len(zstd_stream) < length:
+        Returns:
+            A tuple of the specified type, or the raw, decompressed ZStandard
+                stream if the type is "byte".
+        """
+
+        self.fileobj.seek(startOffset)  # Align stream's cursor to the offset
+
+        compressed = self.fileobj.read(compressedLength)
+        if len(compressed) < compressedLength:
             raise DeserializationError(
                 "An unexpected end-of-file (EOF) was reached while "
-                f"decompressing the ZStandard stream. Expected {length} bytes, "
-                f"but only {len(zstd_stream)} bytes were read."
+                f"decompressing the ZStandard stream. Expected {compressedLength} "
+                f"bytes, but only {len(compressed)} bytes were read."
             )
 
-        return zstd.decompress(zstd_stream)
+        # Decompress the ZStandard stream to get the raw bytes
+        decompressed = zstd.decompress(compressed)
+        if decompressedLength is None:  # Ensure that
+            decompressedLength = len(decompressedLength)
+        assert len(decompressed) == decompressedLength
 
-    def __enter__(self) -> FlatGraph:
+        if type == "bool":
+            return struct.unpack(f"{decompressedLength}?", decompressed)
+        if type == "int":
+            if decompressedLength % 4:
+                raise DeserializationError()
+            return struct.unpack(f"<{decompressedLength // 4}I", decompressed)
+        if type == "string":
+            if decompressedLength % 4:
+                raise DeserializationError()
+
+            pool = self.pool  # Cache the string pool to remove function overhead
+            handles = struct.unpack(f"<{decompressedLength // 4}I", decompressed)
+
+            # TODO: add logging for invalid handles (outside of UINT32_MAX)
+            # Remove invalid handles, before querying the string pool. This is
+            # done, because deleted strings are denoted with `UINT32_MAX`.
+            handles = filter(lambda i: i < len(pool), handles)
+            return tuple(map(lambda i: pool[i], handles))
+        if type == "ref":
+            if decompressedLength % 8:
+                raise DeserializationError()
+
+            refs = struct.unpack(f"<{decompressedLength // 4}I", decompressed)
+            return tuple((refs[r], refs[r + 1]) for r in range(0, len(refs), 2))
+        if type == "byte":
+            return decompressed
+        raise ValueError()
+
+    # pylint: enable=invalid-name,redefined-builtin
+
+    def __enter__(self) -> Graph:
         return self
 
     def __exit__(self, exc_type, exc_value, traceback) -> None:
