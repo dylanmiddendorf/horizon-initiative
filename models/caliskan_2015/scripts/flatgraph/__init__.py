@@ -42,11 +42,13 @@ class Edge:
         src: Node,
         dst: Node,
         direction: Literal[1, 2],
+        prop: Optional[str] = None,
     ) -> None:
         self.name = name
         self._source = src
         self._destination = dst
         self.direction = direction
+        self.property = prop
 
 
 class Node:
@@ -118,6 +120,10 @@ class Schema:
 
             name, src_node_type = edge["edgeLabel"], node_index[edge["nodeLabel"]]
 
+            properties = ()
+            if edge["property"] is not None:
+                properties = graph._zstd_decompress(**edge["property"])
+
             idx = 0  # Iteratively access the neighbors
             for src_node_idx, edge_count in enumerate(node_edge_counts):
                 src = cast(Node, nodes[src_node_type][src_node_idx - 1])
@@ -125,7 +131,8 @@ class Schema:
                     for idx in range(idx, idx + edge_count):
                         dst_node_idx, dst_node_type = neighbors[idx]
                         dst = nodes[dst_node_type][dst_node_idx]
-                        src.add_edge(Edge(name, src, dst, edge["inout"]))
+                        prop = properties[idx] if len(properties) else None
+                        src.add_edge(Edge(name, src, dst, edge["inout"], prop))
                     idx += 1
 
     @staticmethod
