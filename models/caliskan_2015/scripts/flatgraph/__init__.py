@@ -18,11 +18,10 @@ HEADER_FORMAT = f"<{len(MAGIC_BYTES)}sQ"
 HEADER_SIZE = struct.calcsize(HEADER_FORMAT)
 assert HEADER_SIZE == 0x10  # Verify header format is right size
 
-INCOMING = 0
-OUTGOING = 1
-
 UINT32_MAX = 0xFFFF_FFFF
 """A constant holding the maximum value of an unsigned 32-bit integer."""
+
+Property = Union[bool, int, str, list[bool], list[int], list[str]]
 
 # TODO: provide support for graph deletions
 # TODO: de-couple the file open from the constructor, becuase future releases
@@ -36,6 +35,9 @@ class DeserializationError(ValueError):
 
 
 class Edge:
+    INCOMING = 0
+    OUTGOING = 1
+
     def __init__(
         self,
         name: str,
@@ -45,43 +47,51 @@ class Edge:
         prop: Optional[str] = None,
     ) -> None:
         self.name = name
-        self._source = src
-        self._destination = dst
+        self.source = src
+        self.destination = dst
         self.direction = direction
         self.property = prop
 
 
 class Node:
+    """A low-level implementation of a Flat Graph's node."""
+
     def __init__(
         self,
         name: str,
         edges: Optional[set[Edge]] = None,
-        properties: Optional[dict[str, Any]] = None,
+        properties: Optional[dict[str, Property]] = None,
     ) -> None:
-        self._name = name
+        self.name = name
+        self.edges = edges if edges else set()
 
-        self._edges = edges if edges else set()
         self._properties = properties if properties else {}
 
-    def add_edge(self, edge: Edge) -> None:
-        self._edges.add(edge)
+    def add_property(self, name: str, value: Union[bool, int, str]) -> None:
+        """Adds a property to the node.
 
-    def add_property(self, name: str, value) -> None:
-        if name in self._properties:
-            if not isinstance(self._properties[name], list):
-                previous_value = self._properties[name]
-                self._properties[name] = [previous_value]
-            self._properties[name].append(value)
-        else:
+        This method offers a flexible approach to property addition,
+        accommodating variable property cardinalities. It can dynamically
+        adjust a property's cardinality from zero to one or one to many, making
+        it suitable for constructing nodes from serialized flatgraph databases.
+
+        Args:
+            name (str): The name of the property to add.
+            value (Union[bool, int, str]): The value associated with the property.
+        """
+        if name not in self._properties:
             self._properties[name] = value
+            return  # Assume the cardinality is one
 
-    @property
-    def in_neighbors(self) -> list[Edge]:
-        return list(filter(lambda e: e.direction == INCOMING, self._edges))
+        if not isinstance(self._properties[name], list):
+            self._properties[name] = [self._properties[name]]
+        self._properties[name].append(value)
 
-    @property
-    def out_neighbors(self) -> list[Edge]:
-        return list(filter(lambda e: e.direction == OUTGOING, self._edges))
+    def __getitem__(self, name: str) -> Property:
+        return self._properties[name]
+
+    def __setitem__(self, name: str, value: str) -> None:
+        self._properties[name] = value
 
 
 class Schema:
@@ -90,8 +100,8 @@ class Schema:
         nodes: list[list[Node]],
         index: dict[str, int],
     ) -> None:
-        self._nodes = nodes
-        self._index = index
+        self.nodes = nodes
+        self.index = index
 
     @classmethod
     def from_graph(cls, graph: Graph) -> Schema:
@@ -123,16 +133,19 @@ class Schema:
             properties = ()
             if edge["property"] is not None:
                 properties = graph._zstd_decompress(**edge["property"])
+            
+            if edge['edgeLabel'] == 'AST' and edge['nodeLabel'] == 'BLOCK':
+                pass
 
             idx = 0  # Iteratively access the neighbors
-            for src_node_idx, edge_count in enumerate(node_edge_counts):
-                src = cast(Node, nodes[src_node_type][src_node_idx - 1])
+            for src_node_idx, edge_count in enumerate(node_edge_counts[:-1]):
+                src = cast(Node, nodes[src_node_type][src_node_idx])
                 if edge_count:
                     for idx in range(idx, idx + edge_count):
                         dst_node_idx, dst_node_type = neighbors[idx]
                         dst = nodes[dst_node_type][dst_node_idx]
                         prop = properties[idx] if len(properties) else None
-                        src.add_edge(Edge(name, src, dst, edge["inout"], prop))
+                        src.edges.add(Edge(name, src, dst, edge["inout"], prop))
                     idx += 1
 
     @staticmethod
@@ -147,8 +160,8 @@ class Schema:
             name, node_type = prop["propertyLabel"], node_index[prop["nodeLabel"]]
 
             idx = 0
-            for node_idx, property_count in enumerate(node_property_counts):
-                node = cast(Node, nodes[node_type][node_idx - 1])
+            for node_idx, property_count in enumerate(node_property_counts[:-1]):
+                node = cast(Node, nodes[node_type][node_idx])
                 if property_count:
                     for idx in range(idx, idx + property_count):
                         node.add_property(name, properties[idx])
