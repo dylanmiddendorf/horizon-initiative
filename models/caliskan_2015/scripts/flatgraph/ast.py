@@ -6,14 +6,21 @@ import tempfile
 from os import PathLike
 from typing import Union
 
-import flatgraph
-from flatgraph import Edge, Graph, Node
+from flatgraph import Edge, Graph, Node, Property
 
 
 class Cursor:
     def __init__(self, node: Node) -> None:
         self._node = node
         self._children: list[Cursor] = None
+
+    @property
+    def name(self) -> str:
+        return self._node.name
+    
+    @property
+    def properties(self) -> dict[str, Property]:
+        return self._node._properties
 
     @property
     def children(self) -> list[Cursor]:
@@ -40,9 +47,9 @@ class TranslationUnit:
         # the CPG, we will create a temporary file for Joern to use.
         with tempfile.NamedTemporaryFile("wb", delete_on_close=False) as cpg:
             pass
-
+        
         # Utilize Joern to generate the flat graph for traversal
-        subprocess.run(f"joern-parse -o {cpg.name} {filename}", check=True)
+        subprocess.run(["joern-parse", "-o", cpg.name, filename], check=True)
         return cls.from_cpg(cpg.name, filename)
 
     @classmethod
@@ -56,7 +63,7 @@ class TranslationUnit:
         
         file_node_type = self._graph.schema.index['FILE']
         for file in self._graph.schema.nodes[file_node_type]:
-            if file._properties['NAME'] == self._name:
+            if file._properties['NAME'] == 'main.cpp':
                 self._cursor = Cursor(file)
                 return self._cursor
         raise ValueError()
