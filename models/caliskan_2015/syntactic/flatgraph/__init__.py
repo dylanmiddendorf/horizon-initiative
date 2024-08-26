@@ -133,8 +133,8 @@ class Schema:
             properties = ()
             if edge["property"] is not None:
                 properties = graph._zstd_decompress(**edge["property"])
-            
-            if edge['edgeLabel'] == 'AST' and edge['nodeLabel'] == 'BLOCK':
+
+            if edge["edgeLabel"] == "AST" and edge["nodeLabel"] == "BLOCK":
                 pass
 
             idx = 0  # Iteratively access the neighbors
