@@ -1,16 +1,20 @@
+# Copright (C) 2024 Dylan Middendorf
+# SPDX-License-Identifier: BSD-2-Clause
+
 from __future__ import annotations
 
 import subprocess
 import tempfile
 
 from os import PathLike
-from typing import Union
+from typing import Optional
 
 from flatgraph import Edge, Graph, Node, Property
 
 
 class AST:
-    def __init__(self, node: Node) -> None:
+    def __init__(self, graph: Graph, node: Node) -> None:
+        self._graph = graph
         self._node = node
         self._children: list[AST] = None
 
@@ -26,12 +30,16 @@ class AST:
     def children(self) -> list[AST]:
         if self._children is None:
             self._children = [
-                AST(e.destination)
+                AST(self._graph, e.destination)
                 for e in self._node.edges
                 if e.direction == Edge.OUTGOING and e.name in ("AST",)
             ]
 
         return self._children
+
+    @property
+    def code(self) -> str:
+        return self.properties["CODE"]
 
     @classmethod
     def from_source(cls, source: str | bytes | PathLike) -> AST:
@@ -46,12 +54,38 @@ class AST:
         return cls.from_cpg(cpg.name, source)
 
     @classmethod
-    def from_cpg(cls, cpg: str | bytes | PathLike) -> AST:
+    def from_cpg(
+        cls,
+        cpg: str | bytes | PathLike,
+        source: Optional[str | bytes | PathLike] = None,
+    ) -> AST:
+        def is_source(node: Node) -> bool:
+            if node._properties["NAME"] in ("<includes>", "<unknown>"):
+                return False
+            return source is None or node._properties["NAME"] == source
+
         graph = Graph(cpg, "r")  # Parse the database's manifest
-        file_node_type = graph.schema.index["FILE"]
-        for file_node in graph.schema.nodes[file_node_type]:
-            if file_node._properties["NAME"] == "main.cpp":
-                return cls(file_node)
-        raise ValueError()
+        file_nodes = graph.schema.nodes[graph.schema.index["FILE"]]
+        file_nodes: list[Node] = list(filter(is_source, file_nodes))
+
+        if len(file_nodes) == 1:
+            return cls(graph, file_nodes[0])  # Unpack the target file in the CPG
+        raise ValueError("ambigous source file")
+
+    @classmethod
+    def open(cls, filename: str | bytes | PathLike) -> AST:
+        try:
+            return cls.from_cpg(filename)
+        except Exception as e:
+            return cls.from_source(filename)
+    
+    def close(self) -> None:
+        return self._graph.close()
+        
+    def __enter__(self) -> AST:
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        self.close()
 
 # TODO: parse & dump
