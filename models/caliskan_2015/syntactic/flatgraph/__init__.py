@@ -1,3 +1,6 @@
+# Copright (C) 2024 Dylan Middendorf
+# SPDX-License-Identifier: BSD-2-Clause
+
 """Classes for reading and writing Joern flatgraph databases."""
 
 from __future__ import annotations
