@@ -29,7 +29,7 @@ AST_NODE_TYPES = [
 
 def export_static(
     sources: str | Sequence[str],
-    output: str | bytes | PathLike,
+    output_filename: str | bytes | PathLike,
     format: Literal["csv"] = "csv",
 ) -> None:
     """
@@ -67,51 +67,67 @@ def export_static(
             max_depth = max(max_depth, max_node_depth(child, depth + 1))
         return max_depth
 
-    def node_freqency(node: AST) -> None:
-        """Find the term frequency (TF) of all AST node types, excluding leaves."""
-        if len(children := node.children) == 0:
-            return  # Exclude leaves from term frequency
-
-        node_frequencies[AST_NODE_TYPES.index(node.name)] += 1
-        for child in children:
-            node_freqency(child)
-
-    def average_node_depth(node: AST, depth: int = 0) -> None:
+    def node_type_average_depth(
+        node: AST,
+        features: list[tuple[int, int]],
+        depth: int = 0,
+    ) -> None:
         """Find the average depth of all AST node types, excluding leaves."""
         if len(children := node.children) == 0:
             return  # Exclude leaves from average depth
 
         node_type = AST_NODE_TYPES.index(node.name)  # Micro-optimzation
-        summation, count = node_depths[node_type]  # Unpack previous average
-        node_depths[node_type] = (summation + depth + 1, count + 1)
+        summation, count = features[node_type]  # Unpack previous average
+        features[node_type] = (summation + depth + 1, count + 1)
         for child in children:  # Recursivley update the depths
-            average_node_depth(child, depth + 1)
+            node_type_average_depth(child, features, depth + 1)
 
-    with open(output, "wt", encoding="utf-8") as output_file:
-        depth_features = map(lambda f: f"{f}-AD", AST_NODE_TYPES)
-        frequency_features = map(lambda f: f"{f}-TF", AST_NODE_TYPES)
-        output_file.write(
-            ",".join(("source", "max-depth", *depth_features, *frequency_features))
-            + "\n" # Terminate CSV field names
-        )
+    submission_authors: list[str] = []
+    author_submissions: dict[str, list[int]] = {}  # Used strictly for TF-IDF
 
-        for source in sources:
-            root = AST.open(source)
+    max_depth: list[int] = []
+    feature_set: list[list[tuple[int, int]]] = []
+    node_usage: list[set[str]] = [set() for _ in range(len(AST_NODE_TYPES))]
+    for idx, source in enumerate(sources):
+        average_depth = [(0, 0)] * len(AST_NODE_TYPES)
 
-            node_frequencies = [0] * len(AST_NODE_TYPES)
-            node_depths = [(0, 0)] * len(AST_NODE_TYPES)
+        with AST.open(source) as root:
+            # Resolve the author name from the source filename
+            source_filename: str = root.properties["NAME"]
+            author = source_filename[: source_filename.rindex("_")]
 
-            node_freqency(root)  # Populates `node_frequencies`
-            average_node_depth(root)  # Populates `node_depths`
+            # Update author submissions with current submission
+            submission_authors.append(author)
+            if author not in author_submissions:
+                author_submissions[author] = []
+            author_submissions[author].append(idx)
 
-            node_count = sum(node_frequencies)
-            node_frequencies = [f / node_count for f in node_frequencies]
-            node_depths = [s / max(n, 1) for (s, n) in node_depths]
+            max_depth.append(max_node_depth(root))
+            node_type_average_depth(root, average_depth)
+            feature_set.append(average_depth)
 
-            output_file.write(f"{root.properties['NAME']},{max_node_depth(root)},")
-            output_file.write(''.join(map(lambda f: f"{f:.4},", node_frequencies)))
-            output_file.write(",".join(map(lambda f: f"{f:.4}", node_depths)))
-            output_file.write("\n")  # Terminate the record with a line break
+            for node_idx, (_, count) in enumerate(average_depth):
+                if count > 0:  # Only add author if node is present
+                    node_usage[node_idx].add(author)
+
+    ratio = lambda f: f",{f[0]/max(f[1], 1):3}"  # TF / (# of authors used)
+    document_frequency: list[int] = [len(n) for n in node_usage]
+    with open(output_filename, "wt", encoding="utf-8") as output:
+        output.write("author,max-depth")
+        output.write("".join(map(lambda f: f",{f}-NF", AST_NODE_TYPES)))
+        output.write("".join(map(lambda f: f",{f}-ID", AST_NODE_TYPES)))
+        output.write("".join(map(lambda f: f",{f}-ND", AST_NODE_TYPES)) + "\n")
+
+        for idx, submission_features in enumerate(feature_set):
+            output.write(f"{submission_authors[idx]},{max_depth[idx]}")
+
+            n = sum(map(lambda f: f[1], submission_features))
+            term_frequency = [c / n for _, c in submission_features]
+
+            output.write("".join(map(lambda tf: f",{tf:.3}", term_frequency)))
+            output.write("".join(map(ratio, zip(term_frequency, document_frequency))))
+            output.write("".join(map(ratio, submission_features)))
+            output.write("\n")  # Flush and terminate the record
 
 
 def export_leaves(root: AST, author: str, dataset: pd.DataFrame) -> None:
