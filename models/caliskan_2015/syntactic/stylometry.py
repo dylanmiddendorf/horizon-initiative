@@ -3,7 +3,6 @@
 # SPDX-License-Identifier: BSD-2-Clause
 
 from argparse import ArgumentParser, Namespace
-import glob
 import zlib
 
 from os import PathLike
@@ -13,6 +12,10 @@ import pandas as pd
 
 from flatgraph.layers.ast import AST
 
+# TODO: Optimize by "digesting" CPGs, then exporting at once (decrease proccess
+#       times, but increases memory usage)? Decouples feature extraction and
+#       exportation, which will make the linter happy (too-many-locals) and my
+#       heart/soul :)
 
 # fmt: off
 AST_NODE_TYPES = [
@@ -26,11 +29,54 @@ AST_NODE_TYPES = [
 ]
 # fmt: on
 
+def export_bigrams(
+    sources: str | Sequence[str],
+    output_filename: str | bytes | PathLike,
+    output_format: Literal["csv"] = "csv",
+) -> None:
+
+    if output_format != "csv":
+        raise NotImplementedError()
+
+    unique_bigrams: set[int] = set()
+    feature_set: list[dict[int, int]] = []
+
+    def bigram_term_frequency(node: AST, features: dict[int, int]):
+        for child in node.children:
+            bigram_hash = zlib.crc32(f"{node.code} -> {child.code}".encode())
+            features[bigram_hash] = features.get(bigram_hash, 0) + 1
+            bigram_term_frequency(child, features)
+
+    submission_authors: list[str] = []
+    for source in sources:
+        bigrams = {}  # Populated with bigram term frequency
+
+        with AST.open(source) as root:
+            # Resolve the author name from the source filename
+            source_filename: str = root.properties["NAME"]
+            author = source_filename[: source_filename.rindex("_")]
+            submission_authors.append(author)
+
+            
+            bigram_term_frequency(root, bigrams)
+            unique_bigrams.update(bigrams.keys())
+            feature_set.append(bigrams)
+
+    with open(output_filename, "wt", encoding="utf-8") as output:
+        output.write(f"author,{','.join(map(lambda b: hex(b)[2:], unique_bigrams))}\n")
+
+        for submission, bigram_frequency in enumerate(feature_set):
+            bigram_count = sum(bigrams.values())
+
+            output.write(submission_authors[submission])
+            for bigram in unique_bigrams:
+                output.write(f",{bigram_frequency.get(bigram, 1) / bigram_count:.3}")
+            output.write("\n") # Terminate the record entry and flush the buffer
 
 def export_static(
     sources: str | Sequence[str],
     output_filename: str | bytes | PathLike,
-    format: Literal["csv"] = "csv",
+    output_format: Literal["csv"] = "csv",
 ) -> None:
     """
     Exports static features from the specified source code files or code
@@ -50,13 +96,13 @@ def export_static(
             files or CPGs to be processed.
         output: A string, bytes object, or Path-like object specifying the
             output file path.
-        format: The desired output format. Currently, only "csv" is supported.
+        output_format: The desired output format. Currently, only "csv" is
+            supported.
     """
 
-    if format != "csv":
+    if output_format != "csv":
         raise NotImplementedError()
 
-    # TODO: Implement `ASTNodeTypesTFIDF`
     # TODO: Implement `cppKeywords` (lexical)
 
     def max_node_depth(node: AST, depth: int = 0) -> int:
@@ -82,10 +128,8 @@ def export_static(
         for child in children:  # Recursivley update the depths
             node_type_average_depth(child, features, depth + 1)
 
-    submission_authors: list[str] = []
-    author_submissions: dict[str, list[int]] = {}  # Used strictly for TF-IDF
-
     max_depth: list[int] = []
+    submission_authors: list[str] = []
     feature_set: list[list[tuple[int, int]]] = []
     node_usage: list[set[str]] = [set() for _ in range(len(AST_NODE_TYPES))]
     for idx, source in enumerate(sources):
@@ -98,9 +142,6 @@ def export_static(
 
             # Update author submissions with current submission
             submission_authors.append(author)
-            if author not in author_submissions:
-                author_submissions[author] = []
-            author_submissions[author].append(idx)
 
             max_depth.append(max_node_depth(root))
             node_type_average_depth(root, average_depth)
@@ -133,18 +174,6 @@ def export_static(
 def export_leaves(root: AST, author: str, dataset: pd.DataFrame) -> None:
     pass
 
-
-def export_bigrams(root: AST, author: str, dataset: pd.DataFrame) -> None:
-    def unique_bigrams(root: AST) -> set[int]:
-        bigrams: set[int] = set()
-
-        def extract(node: AST) -> None:
-            for child in node.children:
-                bigrams.add(zlib.crc32(f"{node.code} -> {child.code}".encode()))
-                extract(child)  # Recursivley extract bigrams from the tree
-
-        extract(root)
-        return bigrams
 
 
 def _parse_arguments(args: Optional[Sequence[str]] = None) -> Namespace:
@@ -181,6 +210,7 @@ def _parse_arguments(args: Optional[Sequence[str]] = None) -> Namespace:
 def main():
     args = _parse_arguments()
     export_static(args.files, args.static_path)
+    export_bigrams(args.files, args.bigram_path)
 
 
 if __name__ == "__main__":
