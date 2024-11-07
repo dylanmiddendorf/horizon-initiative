@@ -105,6 +105,7 @@ class Schema:
     ) -> None:
         self.nodes = nodes
         self.index = index
+        self._sources = None
 
     @classmethod
     def from_graph(cls, graph: Graph) -> Schema:
@@ -169,6 +170,18 @@ class Schema:
                     for idx in range(idx, idx + property_count):
                         node.add_property(name, properties[idx])
                     idx += 1
+
+    @property
+    def sources(self) -> list[Node]:
+        if self._sources is not None:
+            return self._sources
+
+        def is_source(node: Node) -> bool:
+            return node._properties["NAME"] not in ("<includes>", "<unknown>")
+
+        self._sources = list(filter(is_source, self.nodes[self.index["FILE"]]))
+
+        return self._sources
 
 
 class Graph:

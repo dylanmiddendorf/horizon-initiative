@@ -4,6 +4,7 @@
 
 from argparse import ArgumentParser, Namespace
 import zlib
+import os
 
 from os import PathLike
 from typing import Literal, Optional, Sequence
@@ -11,6 +12,7 @@ from typing import Literal, Optional, Sequence
 import pandas as pd
 
 from flatgraph.layers.ast import AST
+from flatgraph import Graph
 
 # TODO: Optimize by "digesting" CPGs, then exporting at once (decrease proccess
 #       times, but increases memory usage)? Decouples feature extraction and
@@ -49,18 +51,34 @@ def export_bigrams(
 
     submission_authors: list[str] = []
     for source in sources:
-        bigrams = {}  # Populated with bigram term frequency
+        # TODO: shift from splitext to reading file signature
+        if os.path.splitext(source)[1] != 'bin':
+            with Graph(source, 'r') as graph:
+                for graph_soure in graph.schema.sources:
+                    root = AST(graph, graph_soure)
+                    bigrams = {}  # Populated with bigram term frequency
+                    source_filename: str = root.properties["NAME"]
+                    author = source_filename[: source_filename.rindex("_")]
+                    submission_authors.append(author)
 
-        with AST.open(source) as root:
-            # Resolve the author name from the source filename
-            source_filename: str = root.properties["NAME"]
-            author = source_filename[: source_filename.rindex("_")]
-            submission_authors.append(author)
+                    
+                    bigram_term_frequency(root, bigrams)
+                    unique_bigrams.update(bigrams.keys())
+                    feature_set.append(bigrams)
 
-            
-            bigram_term_frequency(root, bigrams)
-            unique_bigrams.update(bigrams.keys())
-            feature_set.append(bigrams)
+        else:
+            bigrams = {}  # Populated with bigram term frequency
+
+            with AST.open(source) as root:
+                # Resolve the author name from the source filename
+                source_filename: str = root.properties["NAME"]
+                author = source_filename[: source_filename.rindex("_")]
+                submission_authors.append(author)
+
+                
+                bigram_term_frequency(root, bigrams)
+                unique_bigrams.update(bigrams.keys())
+                feature_set.append(bigrams)
 
     with open(output_filename, "wt", encoding="utf-8") as output:
         output.write(f"author,{','.join(map(lambda b: hex(b)[2:], unique_bigrams))}\n")
@@ -133,23 +151,42 @@ def export_static(
     feature_set: list[list[tuple[int, int]]] = []
     node_usage: list[set[str]] = [set() for _ in range(len(AST_NODE_TYPES))]
     for idx, source in enumerate(sources):
-        average_depth = [(0, 0)] * len(AST_NODE_TYPES)
+        # TODO: shift from splitext to reading file signature
+        if os.path.splitext(source)[1] != 'bin':
+            with Graph(source, 'r') as graph:
+                for graph_soure in graph.schema.sources:
+                    average_depth = [(0, 0)] * len(AST_NODE_TYPES)
+                    root = AST(graph, graph_soure)
+                    source_filename: str = root.properties["NAME"]
+                    author = source_filename[: source_filename.rindex("_")]
 
-        with AST.open(source) as root:
-            # Resolve the author name from the source filename
-            source_filename: str = root.properties["NAME"]
-            author = source_filename[: source_filename.rindex("_")]
+                    # Update author submissions with current submission
+                    submission_authors.append(author)
 
-            # Update author submissions with current submission
-            submission_authors.append(author)
+                    max_depth.append(max_node_depth(root))
+                    node_type_average_depth(root, average_depth)
+                    feature_set.append(average_depth)
 
-            max_depth.append(max_node_depth(root))
-            node_type_average_depth(root, average_depth)
-            feature_set.append(average_depth)
+                    for node_idx, (_, count) in enumerate(average_depth):
+                        if count > 0:  # Only add author if node is present
+                            node_usage[node_idx].add(author)
+        else:
+            average_depth = [(0, 0)] * len(AST_NODE_TYPES)
+            with AST.open(source) as root:
+                # Resolve the author name from the source filename
+                source_filename: str = root.properties["NAME"]
+                author = source_filename[: source_filename.rindex("_")]
 
-            for node_idx, (_, count) in enumerate(average_depth):
-                if count > 0:  # Only add author if node is present
-                    node_usage[node_idx].add(author)
+                # Update author submissions with current submission
+                submission_authors.append(author)
+
+                max_depth.append(max_node_depth(root))
+                node_type_average_depth(root, average_depth)
+                feature_set.append(average_depth)
+
+                for node_idx, (_, count) in enumerate(average_depth):
+                    if count > 0:  # Only add author if node is present
+                        node_usage[node_idx].add(author)
 
     ratio = lambda f: f",{f[0]/max(f[1], 1):3}"  # TF / (# of authors used)
     document_frequency: list[int] = [len(n) for n in node_usage]

@@ -59,14 +59,12 @@ class AST:
         cpg: str | bytes | PathLike,
         source: Optional[str | bytes | PathLike] = None,
     ) -> AST:
-        def is_source(node: Node) -> bool:
-            if node._properties["NAME"] in ("<includes>", "<unknown>"):
-                return False
-            return source is None or node._properties["NAME"] == source
-
         graph = Graph(cpg, "r")  # Parse the database's manifest
-        file_nodes = graph.schema.nodes[graph.schema.index["FILE"]]
-        file_nodes: list[Node] = list(filter(is_source, file_nodes))
+        file_nodes = graph.schema.sources  # Load a sources from the CPG
+        if source is not None:
+            file_nodes = list(
+                filter(lambda n: n._properties["NAME"] == source, file_nodes)
+            )
 
         if len(file_nodes) == 1:
             return cls(graph, file_nodes[0])  # Unpack the target file in the CPG
@@ -78,14 +76,15 @@ class AST:
             return cls.from_cpg(filename)
         except Exception as e:
             return cls.from_source(filename)
-    
+
     def close(self) -> None:
         return self._graph.close()
-        
+
     def __enter__(self) -> AST:
         return self
 
     def __exit__(self, exc_type, exc_value, traceback) -> None:
         self.close()
+
 
 # TODO: parse & dump
