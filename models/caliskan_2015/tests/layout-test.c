@@ -1,5 +1,5 @@
-#include "data.h"
-#include "features/layout.h"
+#include "../data.h"
+#include "../layout.h"
 
 #include <stdlib.h>
 

@@ -1,5 +1,5 @@
-#include "data.h"
-#include "features/lexical.h"
+#include "../data.h"
+#include "../lexical.h"
 
 #include <stdlib.h>
 
