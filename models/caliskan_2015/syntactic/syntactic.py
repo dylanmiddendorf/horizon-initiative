@@ -1,7 +1,7 @@
 import pandas as pd
 import zlib
 
-from flatgraph.ast import Cursor, TranslationUnit
+from flatgraph.layers.ast import Cursor, TranslationUnit
 
 
 def _max_depth(cursor: Cursor, level: int = 0) -> int:

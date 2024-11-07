@@ -26,7 +26,7 @@ def cpg_tree(args: Namespace):
             is_tail = indentation[-3] == '└' # Final node in the level?
             indentation = f'{indentation[:-3]}{' ' if is_tail else '│'}   '
         
-        print(node.name, '--', node.properties['CODE'])
+        print(node.name, node.properties['CODE'].encode())
         n = len(node.children)  # number of children in given node
         for idx, child in enumerate(node.children, start=1):
             traverse(child, indentation + ("├──" if idx < n else "└──"))
@@ -53,7 +53,6 @@ def main():
 
     parser.add_argument("cpg")
     args = parser.parse_args()
-    print(args)
     args.operation(args)
 
 
