@@ -6,10 +6,10 @@
 #include <stdlib.h>
 #include <sys/stat.h>
 
-#include "../ctok.h"
-#include "../data.c"
-#include "../map.h"
-#include "../strpool.h"
+#include "ctok.h"
+#include "data.h"
+#include "map.h"
+#include "strpool.h"
 
 void
 hri_extract_lexical_features (data_loader_t *loader)
