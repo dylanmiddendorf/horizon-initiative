@@ -45,6 +45,22 @@ def scapRD(author_profiles, unknown_code, n, L):
     attributed_author = min(relative_distances, key=relative_distances.get)
     return attributed_author
 
+# Attribute the authorship of unknown_code using SCAP with SPI.
+def scapSPI(author_profiles, unknown_code, n, L):
+    unknown_ngrams = get_ngrams(unknown_code, n)
+    unknown_profile = Counter(unknown_ngrams)
+    unknown_profile = Counter(dict(unknown_profile.most_common(L)))
+
+    intersections = {}
+    for author, profile in author_profiles.items():
+        profile = Counter(dict(profile.most_common(L)))
+        common_ngrams = set(profile.keys()) & set(unknown_profile.keys())
+        intersections[author] = sum(profile[ngram] for ngram in common_ngrams)
+
+    attributed_author = max(intersections, key=intersections.get)
+    return attributed_author
+
+
 # Calculate accuracy
 def calculate_accuracy(author_profiles, test_files, n, L, method):
     total_predictions = 0
@@ -93,7 +109,7 @@ def split_files_across_authors(file_paths, train_proportion=0.80):
 # Main execution
 if __name__ == "__main__":
     # Set source code directory and get a list of all file paths in the directory
-    source_code_dir = 'Datasets/100Authors'
+    source_code_dir = ''
     file_paths = [os.path.join(source_code_dir, f) for f in os.listdir(source_code_dir)]
     
     # Split the files across training and testing
