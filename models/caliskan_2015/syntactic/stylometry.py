@@ -31,6 +31,7 @@ AST_NODE_TYPES = [
 ]
 # fmt: on
 
+
 def export_bigrams(
     sources: str | Sequence[str],
     output_filename: str | bytes | PathLike,
@@ -52,8 +53,8 @@ def export_bigrams(
     submission_authors: list[str] = []
     for source in sources:
         # TODO: shift from splitext to reading file signature
-        if os.path.splitext(source)[1] != 'bin':
-            with Graph(source, 'r') as graph:
+        if os.path.splitext(source)[1] != "bin":
+            with Graph(source, "r") as graph:
                 for graph_soure in graph.schema.sources:
                     root = AST(graph, graph_soure)
                     bigrams = {}  # Populated with bigram term frequency
@@ -61,7 +62,6 @@ def export_bigrams(
                     author = source_filename[: source_filename.rindex("_")]
                     submission_authors.append(author)
 
-                    
                     bigram_term_frequency(root, bigrams)
                     unique_bigrams.update(bigrams.keys())
                     feature_set.append(bigrams)
@@ -75,7 +75,6 @@ def export_bigrams(
                 author = source_filename[: source_filename.rindex("_")]
                 submission_authors.append(author)
 
-                
                 bigram_term_frequency(root, bigrams)
                 unique_bigrams.update(bigrams.keys())
                 feature_set.append(bigrams)
@@ -88,8 +87,9 @@ def export_bigrams(
 
             output.write(submission_authors[submission])
             for bigram in unique_bigrams:
-                output.write(f",{bigram_frequency.get(bigram, 1) / bigram_count:.3}")
-            output.write("\n") # Terminate the record entry and flush the buffer
+                output.write(f",{bigram_frequency.get(bigram, 0) / bigram_count:.3}")
+            output.write("\n")  # Terminate the record entry and flush the buffer
+
 
 def export_static(
     sources: str | Sequence[str],
@@ -152,8 +152,8 @@ def export_static(
     node_usage: list[set[str]] = [set() for _ in range(len(AST_NODE_TYPES))]
     for idx, source in enumerate(sources):
         # TODO: shift from splitext to reading file signature
-        if os.path.splitext(source)[1] != 'bin':
-            with Graph(source, 'r') as graph:
+        if os.path.splitext(source)[1] != "bin":
+            with Graph(source, "r") as graph:
                 for graph_soure in graph.schema.sources:
                     average_depth = [(0, 0)] * len(AST_NODE_TYPES)
                     root = AST(graph, graph_soure)
@@ -208,9 +208,73 @@ def export_static(
             output.write("\n")  # Flush and terminate the record
 
 
-def export_leaves(root: AST, author: str, dataset: pd.DataFrame) -> None:
-    pass
+def export_leaves(
+    sources: str | Sequence[str],
+    output_filename: str | bytes | PathLike,
+    output_format: Literal["csv"] = "csv",
+) -> None:
+    if output_format != "csv":
+        raise NotImplementedError()
 
+    unique_leaves: set[int] = set()
+    feature_set: list[dict[int, int]] = []
+
+    def leaf_term_frequency(
+        node: AST, depth: int, features: dict[int, tuple[int, int]]
+    ):
+        if not node.children:
+            node_hash = zlib.crc32(node.code.encode())
+            count, sum_depth = features.get(node_hash, (0, 0))
+            count, sum_depth = count + 1, sum_depth + depth
+            features[node_hash] = (count, sum_depth)
+            return  # Don't try to process any children
+
+        for child in node.children:
+            leaf_term_frequency(child, depth + 1, features)
+
+    submission_authors: list[str] = []
+    for source in sources:
+        # TODO: shift from splitext to reading file signature
+        if os.path.splitext(source)[1] != "bin":
+            with Graph(source, "r") as graph:
+                for graph_soure in graph.schema.sources:
+                    root = AST(graph, graph_soure)
+                    leaves = {}  # Populated with bigram term frequency
+                    source_filename: str = root.properties["NAME"]
+                    author = source_filename[: source_filename.rindex("_")]
+                    submission_authors.append(author)
+
+                    leaf_term_frequency(root, 0, leaves)
+                    unique_leaves.update(leaves.keys())
+                    feature_set.append(leaves)
+
+        else:
+            leaves = {}  # Populated with bigram term frequency
+
+            with AST.open(source) as root:
+                # Resolve the author name from the source filename
+                source_filename: str = root.properties["NAME"]
+                author = source_filename[: source_filename.rindex("_")]
+                submission_authors.append(author)
+
+                leaf_term_frequency(root, 0, leaves)
+                unique_leaves.update(leaves.keys())
+                feature_set.append(leaves)
+
+    with open(output_filename, "wt", encoding="utf-8") as output:
+        output.write(
+            f"author,{','.join(map(lambda b: f'TF.{hex(b)[2:]},AD.{hex(b)[2:]}', unique_leaves))}\n"
+        )
+
+        for submission, leaves in enumerate(feature_set):
+            leaf_count = sum(map(lambda f: f[0], leaves.values()))
+
+            output.write(submission_authors[submission])
+            for leaf in unique_leaves:
+                count, depth = leaves.get(leaf, (0, 0))
+                avg_depth = depth / count if count else -1.
+                output.write(f",{count / leaf_count:.3},{avg_depth:.3}")
+            output.write("\n")  # Terminate the record entry and flush the buffer
 
 
 def _parse_arguments(args: Optional[Sequence[str]] = None) -> Namespace:
@@ -248,6 +312,7 @@ def main():
     args = _parse_arguments()
     export_static(args.files, args.static_path)
     export_bigrams(args.files, args.bigram_path)
+    export_leaves(args.files, args.leaf_path)
 
 
 if __name__ == "__main__":
