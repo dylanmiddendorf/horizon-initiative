@@ -71,6 +71,7 @@ void
 hri_layout_export (data_loader_t *loader)
 {
   FILE *csv = fopen ("layout.csv", "wt");
+  fputs("author,tabs,spaces,empty_lines,whitespace,curly_braces,tab_start\n", csv);
   while (hdl_has_next (loader))
     {
       double *f = hri_layout_features (hdl_next (loader));

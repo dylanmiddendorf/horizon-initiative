@@ -28,6 +28,7 @@ hri_extract_lexical_features (data_loader_t *loader)
     }
 
   FILE *csv_stream = fopen ("lexical.csv", "w+t");
+  fputs("author,", csv_stream);
   for (size_t i = 0; i < pool.capacity; ++i)
     if (pool.table[i].key != NULL)
       fprintf (csv_stream, "%08x,", pool.table[i].hash);
@@ -46,12 +47,14 @@ hri_extract_lexical_features (data_loader_t *loader)
           map_put (map, token, prev_value + 1);
         }
 
+      fprintf(csv_stream, "%s,", loader->index.gl_pathv[i]);
       for (size_t i = 0; i < pool.capacity; ++i)
         if (pool.table[i].key != NULL)
           {
             float freq = (float)map_get (map, pool.table[i].key);
             fprintf (csv_stream, "%.5f,", freq / count);
           }
+      fseek(csv_stream, SEEK_CUR, -1);
       fprintf (csv_stream, "\n");
     }
   fclose (csv_stream);
